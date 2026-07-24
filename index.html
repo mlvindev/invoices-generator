@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Editor de Factura Comercial</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --ink:#111111;
+    --paper:#ffffff;
+    --bg:#2b2620;
+    --accent:#7a5c2e;
+    --edit-hint:#fff7e0;
+    --edit-focus:#ffe9b8;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    font-family:'Century Gothic','Trebuchet MS',Arial,sans-serif;
+    color:var(--ink);
+  }
+
+  /* ============ BARRA DE HERRAMIENTAS ============ */
+  .toolbar{
+    position:sticky; top:0; z-index:50;
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:12px 20px;
+    background:#1c1813;
+    border-bottom:2px solid var(--accent);
+  }
+  .toolbar h1{
+    font-size:15px; font-weight:700; color:#f3ead9;
+    margin:0 14px 0 0; letter-spacing:.06em; text-transform:uppercase;
+  }
+  .toolbar h1 small{ display:block; font-size:10px; font-weight:400; color:#b9a77f; letter-spacing:.18em; }
+  .btn{
+    appearance:none; border:1px solid #5a4a2c; background:#2e2719; color:#f3ead9;
+    font:600 12px/1 'Trebuchet MS',Arial,sans-serif; letter-spacing:.04em;
+    padding:9px 14px; border-radius:4px; cursor:pointer;
+  }
+  .btn:hover{ background:#3b311f; }
+  .btn:focus-visible{ outline:2px solid #e8c877; outline-offset:2px; }
+  .btn.primary{ background:var(--accent); border-color:#8f6d38; }
+  .btn.primary:hover{ background:#8a6934; }
+  .toolbar .spacer{ flex:1; }
+  .status{ font-size:11px; color:#b9a77f; min-height:14px; }
+
+  /* ============ HOJA ============ */
+  .stage{ padding:28px 12px 60px; display:flex; justify-content:center; }
+  .sheet{
+    width:816px; max-width:100%;
+    background:var(--paper);
+    padding:34px 40px 30px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);
+  }
+  .frame{ border:1.5px solid #000; padding:16px 18px 14px; }
+
+  /* Campos editables */
+  [contenteditable="true"]{
+    outline:none;
+    background:var(--edit-hint);
+    border-radius:2px;
+    min-width:12px;
+    transition:background .12s;
+  }
+  [contenteditable="true"]:hover{ background:#fff1c9; }
+  [contenteditable="true"]:focus{ background:var(--edit-focus); box-shadow:inset 0 0 0 1px #d9b45c; }
+  [contenteditable="true"]:empty::before{ content:attr(data-ph); color:#b3a884; }
+
+  /* ---- Encabezado ---- */
+  .head{ display:grid; grid-template-columns:200px 1fr 130px; gap:10px; align-items:center; }
+  .logo-slot{
+    position:relative;
+    display:flex; align-items:center; justify-content:center;
+    min-height:86px; border:1px dashed transparent;
+  }
+  .logo-slot:hover{ border-color:#c9b476; }
+  .logo-content{ display:flex; align-items:center; justify-content:center; width:100%; }
+  .logo-content img{ max-width:100%; max-height:96px; display:block; margin:0 auto; }
+  .logo-btn{
+    position:absolute; bottom:-2px; right:-2px;
+    font:600 10px/1 'Trebuchet MS',Arial,sans-serif;
+    padding:4px 7px; border-radius:3px; cursor:pointer;
+    border:1px solid #c9b476; background:#fdf8ec; color:#7a5c2e;
+    opacity:.65; transition:opacity .12s;
+  }
+  .logo-slot:hover .logo-btn, .logo-btn:focus-visible{ opacity:1; }
+  .logo-btn:focus-visible{ outline:2px solid #b8912e; outline-offset:1px; }
+  .logo-fallback{ text-align:center; }
+  .logo-fallback .brand{
+    font-family:Georgia,'Times New Roman',serif; font-size:26px; letter-spacing:.14em; font-weight:600;
+  }
+  .logo-fallback .tag{
+    font-size:8px; letter-spacing:.34em; color:#7a5c2e; border-top:2px solid #7a5c2e; border-bottom:2px solid #7a5c2e;
+    padding:2px 0; margin-top:3px; text-transform:uppercase;
+  }
+  .seal-fallback{
+    width:96px; height:96px; border-radius:50%; margin:0 auto;
+    background:radial-gradient(circle at 35% 30%, #f0d896, #b8912e 70%, #8a6a1c);
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    font-family:Georgia,serif; font-size:10px; font-weight:700; color:#3d2c05; padding:10px;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .company{ text-align:center; font-family:'Times New Roman',Times,serif; }
+  .company .name{ font-size:19px; }
+  .company .meta{ font-size:10.5px; line-height:1.35; margin-top:2px; }
+  .doc-title{
+    text-align:center; font-weight:700; font-size:15px; letter-spacing:.02em;
+    margin:10px 0 12px; font-family:Arial,Helvetica,sans-serif;
+  }
+
+  /* ---- Bloque No. de factura ---- */
+  .inv-row{ display:grid; grid-template-columns:230px 160px 1fr; border:1.5px solid #000; }
+  .inv-row .lbl{
+    font-family:'Times New Roman',serif; font-weight:700; font-size:24px; padding:6px 10px;
+  }
+  .inv-row .num{
+    border-left:1.5px solid #000; border-right:1.5px solid #000;
+    font-size:22px; padding:8px 10px; font-family:Arial,sans-serif;
+  }
+  .inv-row .way{
+    display:flex; align-items:center; justify-content:center; gap:4px;
+    font-family:'Times New Roman',serif; font-size:12.5px; padding:4px 8px;
+  }
+
+  .bar{
+    background:#000; color:#fff; font-weight:700; font-size:12px; padding:3px 8px; letter-spacing:.02em;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .two-col{ display:grid; grid-template-columns:1fr 1fr; }
+  .date-incoterm{ margin-top:8px; border:1.5px solid #000; border-top:none; }
+  .date-incoterm .bar{ display:flex; }
+  .date-incoterm .cells{ display:grid; grid-template-columns:1fr 1fr; }
+  .date-incoterm .cell{ padding:6px 10px; }
+  .date-incoterm .cell.date{ text-align:center; font-weight:700; font-size:13px; }
+  .date-incoterm .cell.inco{ text-align:center; font-weight:700; font-size:17px; border-left:1.5px solid #000; }
+
+  /* ---- Contacto ---- */
+  .contact{ margin-top:10px; border:1.5px solid #000; }
+  .contact .cols{ display:grid; grid-template-columns:1fr 1fr; }
+  .contact .col{ padding:6px 10px 8px; font-size:12px; line-height:1.5; }
+  .contact .col + .col{ border-left:1.5px solid #000; }
+  .contact b{ font-size:11.5px; }
+  .multiline{ white-space:pre-wrap; display:block; min-height:84px; }
+  .kv{ display:flex; gap:8px; margin-top:4px; }
+  .kv .k{ min-width:64px; }
+  .kv .v{ flex:1; }
+  .kv .v.right{ text-align:right; }
+
+  /* ---- Tabla de mercancías ---- */
+  .goods{ margin-top:12px; border:1.5px solid #000; }
+  .goods table{ width:100%; border-collapse:collapse; font-size:12px; }
+  .goods thead th{
+    background:#000; color:#fff; font-size:11.5px; padding:3px 6px; letter-spacing:.02em;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .goods td{ border-right:1.5px solid #000; padding:6px 8px; vertical-align:top; }
+  .goods td:last-child{ border-right:none; }
+  .goods .c-units{ width:90px; text-align:center; }
+  .goods .c-unitval{ width:110px; text-align:center; }
+  .goods .c-sub{ width:150px; }
+  .goods .sub-wrap{ display:flex; justify-content:space-between; gap:6px; }
+  .goods .desc{ min-height:300px; white-space:pre-wrap; display:block; }
+  .goods tfoot td{ border-top:1.5px solid #000; font-weight:700; padding:4px 8px; }
+  .goods tfoot .tot-lbl{ text-align:center; }
+  .row-tools{ display:flex; gap:6px; margin-top:6px; }
+  .row-tools button{
+    font-size:10px; padding:3px 8px; border:1px solid #bbb; background:#f6f6f6; border-radius:3px; cursor:pointer;
+  }
+  .row-tools button:hover{ background:#eee; }
+
+  .calc{ background:transparent; }
+  .goods td .calc, .tot-lbl .calc{ font-variant-numeric:tabular-nums; }
+
+  /* ---- Pie ---- */
+  .origin{ margin-top:8px; border:1.5px solid #000; display:grid; grid-template-columns:1fr 220px; }
+  .origin .lbl{ font-weight:700; font-size:11.5px; padding:4px 8px; border-right:1.5px solid #000; }
+  .origin .val{ text-align:center; padding:4px 8px; font-size:12.5px; }
+  .oath{ text-align:center; font-weight:700; font-size:11px; margin-top:120px; }
+
+  .hint{
+    max-width:816px; margin:14px auto 0; color:#cbbd9c; font-size:12px; line-height:1.6; text-align:center;
+  }
+
+  /* ============ CONFIGURACIÓN ============ */
+  .modal-backdrop{
+    position:fixed; inset:0; z-index:100;
+    background:rgba(15,12,8,.72);
+    display:none; align-items:center; justify-content:center; padding:16px;
+  }
+  .modal-backdrop.open{ display:flex; }
+  .modal{
+    width:560px; max-width:100%; max-height:90vh; overflow:auto;
+    background:#f7f2e7; border:1px solid #c9b476; border-radius:6px;
+    box-shadow:0 18px 60px rgba(0,0,0,.55);
+  }
+  .modal header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 18px; border-bottom:1px solid #d8cba6;
+  }
+  .modal header h2{ margin:0; font-size:14px; letter-spacing:.08em; text-transform:uppercase; color:#4a3a1c; }
+  .modal .close-x{
+    appearance:none; border:none; background:none; font-size:18px; cursor:pointer; color:#7a5c2e; line-height:1;
+  }
+  .modal .body{ padding:16px 18px 20px; display:grid; gap:16px; }
+  .cfg-item{ border:1px solid #d8cba6; border-radius:4px; background:#fff; padding:12px 14px; }
+  .cfg-item h3{ margin:0 0 8px; font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:#4a3a1c; }
+  .cfg-row{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .cfg-preview{
+    width:130px; height:96px; border:1px dashed #c9b476; border-radius:4px;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; background:#faf7ef;
+  }
+  .cfg-preview img{ max-width:100%; max-height:100%; }
+  .cfg-preview .none{ font-size:10px; color:#a08e5e; text-align:center; padding:6px; }
+  .cfg-actions{ display:flex; flex-direction:column; gap:8px; flex:1; min-width:180px; }
+  .btn.light{
+    background:#fff; color:#4a3a1c; border:1px solid #c9b476;
+  }
+  .btn.light:hover{ background:#f3ecd9; }
+  .btn.danger{ background:#fff; color:#8a2f22; border:1px solid #d0a49b; }
+  .btn.danger:hover{ background:#f7e9e6; }
+  .cfg-size{ display:flex; align-items:center; gap:8px; font-size:11px; color:#4a3a1c; }
+  .cfg-size input[type="range"]{ flex:1; accent-color:#7a5c2e; }
+  .cfg-note{ font-size:11px; color:#7a6a44; line-height:1.5; margin:0; }
+
+  /* ============ IMPRESIÓN / PDF ============ */
+  /* Simulación en pantalla para medir el alto real de impresión */
+  body.print-sim .row-tools{ display:none; }
+  body.print-sim .goods .desc{ min-height:240px; }
+  body.print-sim .oath{ margin-top:40px; }
+
+  @media print{
+    @page{ size:letter; margin:12mm; }
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+    body{ background:#fff; }
+    .bar, .goods thead th{ background:#000 !important; color:#fff !important; }
+    .toolbar,.hint,.row-tools,.modal-backdrop,.logo-btn{ display:none !important; }
+    .stage{ padding:0; }
+    .sheet{ box-shadow:none; padding:0; width:100%; }
+    [contenteditable="true"]{ background:transparent !important; box-shadow:none !important; }
+    [contenteditable="true"]:empty::before{ content:""; }
+    .logo-slot{ border:none; }
+    /* Ajuste a una hoja carta */
+    .goods .desc{ min-height:240px; }
+    .oath{ margin-top:40px; }
+    .origin, .oath{ page-break-inside:avoid; }
+    body.one-page .frame{ min-height:250mm; display:flex; flex-direction:column; }
+    body.one-page .oath{ margin-top:auto; padding-top:16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>Factura Comercial<small>Editor Invoice</small></h1>
+  <button class="btn" id="btnConfig">⚙ Configuración</button>
+  <button class="btn" id="btnNew">Nueva factura</button>
+  <button class="btn" id="btnLoadPdf">Cargar PDF</button>
+  <button style="display: none;" class="btn" id="btnSaveJson">Guardar datos</button>
+  <button style="display: none;" class="btn" id="btnLoadJson">Cargar datos</button>
+  <span class="spacer"></span>
+  <span class="status" id="status"></span>
+  <button class="btn primary" id="btnPdf">Exportar PDF</button>
+  <input type="file" id="filePdf" accept="application/pdf" hidden>
+  <input type="file" id="fileJson" accept="application/json" hidden>
+  <input type="file" id="fileLogo" accept="image/*" hidden>
+  <input type="file" id="fileSeal" accept="image/*" hidden>
+</div>
+
+<div class="stage">
+  <div class="sheet" id="sheet">
+    <div class="frame">
+
+      <!-- Encabezado -->
+      <div class="head">
+        <div class="logo-slot" id="logoSlot">
+          <div class="logo-content">
+            <div class="logo-fallback">
+              <div class="brand" contenteditable="true" data-f="brandName">Logo</div>
+              <div class="tag" contenteditable="true" data-f="brandTag">Historical</div>
+            </div>
+          </div>
+          <button type="button" class="logo-btn" data-img="logo" title="Subir imagen del logo">📷 Subir</button>
+        </div>
+        <div class="company">
+          <div class="name" contenteditable="true" data-f="company">ACME Sociedad Anonima</div>
+          <div class="meta multiline" contenteditable="true" data-f="companyMeta">Nit: 000000-1
+Guatemala City C.A.
+Postal Code: 01000
+PBX: (502) 00000000</div>
+        </div>
+        <div class="logo-slot" id="sealSlot">
+          <div class="logo-content">
+            <div class="seal-fallback">Logo<br>AUCTION</div>
+          </div>
+          <button type="button" class="logo-btn" data-img="seal" title="Subir imagen del sello">📷 Subir</button>
+        </div>
+      </div>
+
+      <div class="doc-title">COMMERCIAL INVOICE</div>
+
+      <!-- No. de factura -->
+      <div class="inv-row">
+        <div class="lbl">Invoice No.:</div>
+        <div class="num" contenteditable="true" data-f="invoiceNo" data-ph="A-000">A-051</div>
+        <div class="way">Waybill Number:&nbsp;<span contenteditable="true" data-f="waybill" data-ph="—">UPS AA BBB 111 00</span></div>
+      </div>
+
+      <!-- Fecha / Incoterm -->
+      <div class="date-incoterm">
+        <div class="cells" style="border-bottom:1.5px solid #000;">
+          <div class="bar">DATE</div>
+          <div class="bar" style="border-left:1.5px solid #000;">INCOTERM:</div>
+        </div>
+        <div class="cells">
+          <div class="cell date" contenteditable="true" data-f="date" data-ph="dd/mm/aaaa">16/06/2026</div>
+          <div class="cell inco" contenteditable="true" data-f="incoterm" data-ph="FOB">FOB</div>
+        </div>
+      </div>
+
+      <!-- Contacto -->
+      <div class="contact">
+        <div class="bar">CONTACT INFORMATION</div>
+        <div class="cols">
+          <div class="col">
+            <b>SHIPPER:</b>
+            <span class="multiline" contenteditable="true" data-f="shipper">ACME S.A.
+Direccion
+City, C.A.
+Postal Code: 01000
+Phone:        (502) 0000-0000</span>
+            <div class="kv"><span class="k">Attention:</span><span class="v" contenteditable="true" data-f="attention">Nombre vendedor</span></div>
+          </div>
+          <div class="col">
+            <b>CONSIGNEE/ BILL TO:</b>
+            <span class="multiline" contenteditable="true" data-f="consignee">Nombre comprador
+DireccionN</span>
+            <div class="kv"><span class="k">Phone:</span><span class="v right" contenteditable="true" data-f="consigneePhone">0000000000</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mercancías -->
+      <div class="goods">
+        <table>
+          <thead>
+            <tr>
+              <th class="c-units">UNITS</th>
+              <th>DESCRIPTION OF GOODS:</th>
+              <th class="c-unitval">UNIT VALUE</th>
+              <th class="c-sub">SUB-TOTAL USD$</th>
+            </tr>
+          </thead>
+          <tbody id="goodsBody">
+            <tr class="goods-row">
+              <td class="c-units"><span contenteditable="true" data-r="units">1</span></td>
+              <td><span class="desc" contenteditable="true" data-r="desc">Sample
+Courtesy pen
+
+Sample Set
+
+NET WEIGHT 1.70  KGS
+
+
+
+
+Product of 
+PRODUCT CODE: 000000000
+
+
+*****Sólo para propositos de Aduana *****</span></td>
+              <td class="c-unitval"><span contenteditable="true" data-r="unitValue">$5.00</span></td>
+              <td class="c-sub"><div class="sub-wrap"><span>$</span><span data-r="subTotal" class="calc" style="text-align:right;flex:1;">5.00</span></div></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td class="tot-lbl">TOTAL<br><span data-f="totalUnits" id="totalUnits" class="calc">1</span></td>
+              <td></td>
+              <td></td>
+              <td><div class="sub-wrap"><span>TOTAL</span></div>
+                  <div class="sub-wrap"><span>$</span><span data-f="totalAmount" id="totalAmount" class="calc" style="text-align:right;flex:1;">5.00</span></div></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="row-tools">
+        <button id="addRow" type="button">+ Agregar renglón</button>
+        <button id="delRow" type="button">− Quitar último renglón</button>
+      </div>
+
+      <!-- Origen -->
+      <div class="origin">
+        <div class="lbl">Country of Origin of the above described Goods:</div>
+        <div class="val" contenteditable="true" data-f="origin">Guatemala</div>
+      </div>
+
+      <div class="oath" contenteditable="true" data-f="oath">Certified under oath the datum declared in the bill is correct</div>
+    </div>
+  </div>
+</div>
+
+<p class="hint">
+  Todos los campos con fondo crema son editables (clic sobre el texto). Los recuadros de logo aceptan una imagen con un clic.
+  «Exportar PDF» abre el diálogo de impresión: elija «Guardar como PDF» y márgenes predeterminados.
+  «Cargar PDF» lee una factura de este mismo formato y rellena el formulario automáticamente.
+</p>
+
+<!-- Panel de configuración -->
+<div class="modal-backdrop" id="cfgBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cfgTitle">
+    <header>
+      <h2 id="cfgTitle">Configuración de imágenes</h2>
+      <button class="close-x" id="cfgClose" aria-label="Cerrar configuración">✕</button>
+    </header>
+    <div class="body">
+      <div class="cfg-item">
+        <h3>Logo principal (izquierda)</h3>
+        <div class="cfg-row">
+          <div class="cfg-preview" id="cfgLogoPreview"><span class="none">Sin imagen<br>(se muestra el texto LOGO)</span></div>
+          <div class="cfg-actions">
+            <button class="btn light" id="cfgLogoUpload" type="button">Subir imagen…</button>
+            <button class="btn danger" id="cfgLogoRemove" type="button">Quitar imagen</button>
+            <label class="cfg-size">Tamaño
+              <input type="range" id="cfgLogoSize" min="40" max="100" value="100">
+              <span id="cfgLogoSizeVal">100%</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="cfg-item">
+        <h3>Sello / medalla (derecha)</h3>
+        <div class="cfg-row">
+          <div class="cfg-preview" id="cfgSealPreview"><span class="none">Sin imagen<br>(se muestra el sello dorado)</span></div>
+          <div class="cfg-actions">
+            <button class="btn light" id="cfgSealUpload" type="button">Subir imagen…</button>
+            <button class="btn danger" id="cfgSealRemove" type="button">Quitar imagen</button>
+            <label class="cfg-size">Tamaño
+              <input type="range" id="cfgSealSize" min="40" max="100" value="100">
+              <span id="cfgSealSizeVal">100%</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <p class="cfg-note">
+        Formatos recomendados: PNG con fondo transparente o JPG. Las imágenes quedan incrustadas en la factura,
+        se incluyen al exportar el PDF y también se guardan dentro del archivo de datos (JSON), de modo que al
+        volver a cargar los datos los logos regresan automáticamente.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $  = s => document.querySelector(s);
+  const $$ = s => Array.from(document.querySelectorAll(s));
+  const status = msg => { $('#status').textContent = msg || ''; };
+
+  /* ---------- Imágenes (logo y sello) ---------- */
+  const fallbacks = {
+    logo: document.getElementById('logoSlot').innerHTML,
+    seal: document.getElementById('sealSlot').innerHTML
+  };
+  const images = {
+    logo: { src:null, size:100 },
+    seal: { src:null, size:100 }
+  };
+  const imgCfg = {
+    logo: { slot:'logoSlot', input:'fileLogo', preview:'cfgLogoPreview', upload:'cfgLogoUpload',
+            remove:'cfgLogoRemove', range:'cfgLogoSize', rangeVal:'cfgLogoSizeVal' },
+    seal: { slot:'sealSlot', input:'fileSeal', preview:'cfgSealPreview', upload:'cfgSealUpload',
+            remove:'cfgSealRemove', range:'cfgSealSize', rangeVal:'cfgSealSizeVal' }
+  };
+
+  function renderImage(key){
+    const cfg  = imgCfg[key];
+    const slot = document.getElementById(cfg.slot);
+    const prev = document.getElementById(cfg.preview);
+    const st   = images[key];
+    if (st.src){
+      slot.innerHTML = '<img alt="'+key+'" src="'+st.src+'" style="max-width:'+st.size+'%;max-height:'+st.size+'%;">';
+      prev.innerHTML = '<img alt="vista previa" src="'+st.src+'">';
+    } else {
+      slot.innerHTML = fallbacks[key];
+      prev.innerHTML = '<span class="none">Sin imagen<br>(se muestra el diseño de respaldo)</span>';
+    }
+    const range = document.getElementById(cfg.range);
+    range.value = st.size;
+    document.getElementById(cfg.rangeVal).textContent = st.size + '%';
+  }
+
+  function setImage(key, src){ images[key].src = src || null; renderImage(key); }
+
+  Object.keys(imgCfg).forEach(key => {
+    const cfg = imgCfg[key];
+    const input = document.getElementById(cfg.input);
+    // Subir desde el panel de configuración o con clic directo en la hoja
+    document.getElementById(cfg.upload).addEventListener('click', () => input.click());
+    document.getElementById(cfg.slot).addEventListener('click', e => {
+      if (e.target.isContentEditable) return; // permitir editar el texto de respaldo
+      input.click();
+    });
+    input.addEventListener('change', () => {
+      const f = input.files[0]; if(!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { setImage(key, rd.result); status('Imagen actualizada.'); };
+      rd.readAsDataURL(f);
+      input.value = '';
+    });
+    document.getElementById(cfg.remove).addEventListener('click', () => {
+      setImage(key, null); status('Imagen quitada: se usa el diseño de respaldo.');
+    });
+    document.getElementById(cfg.range).addEventListener('input', e => {
+      images[key].size = +e.target.value;
+      renderImage(key);
+    });
+  });
+
+  /* ---------- Panel de configuración ---------- */
+  const backdrop = document.getElementById('cfgBackdrop');
+  document.getElementById('btnConfig').addEventListener('click', () => {
+    renderImage('logo'); renderImage('seal');
+    backdrop.classList.add('open');
+  });
+  document.getElementById('cfgClose').addEventListener('click', () => backdrop.classList.remove('open'));
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.classList.remove('open'); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') backdrop.classList.remove('open'); });
+
+  /* ---------- Renglones y cálculo automático ---------- */
+  const num = s => parseFloat(String(s).replace(/[^0-9.\-]/g,'')) || 0;
+
+  function recalc(){
+    let totU = 0, totA = 0;
+    $$('#goodsBody .goods-row').forEach(tr => {
+      const units = num(tr.querySelector('[data-r="units"]').textContent);
+      const unitV = num(tr.querySelector('[data-r="unitValue"]').textContent);
+      const sub   = units * unitV;
+      tr.querySelector('[data-r="subTotal"]').textContent = sub ? sub.toFixed(2) : '0.00';
+      totU += units;
+      totA += sub;
+    });
+    $('#totalUnits').textContent  = totU;
+    $('#totalAmount').textContent = totA.toFixed(2);
+  }
+
+  function rowTemplate(){
+    const tr = document.createElement('tr');
+    tr.className = 'goods-row';
+    tr.innerHTML =
+      '<td class="c-units"><span contenteditable="true" data-r="units" data-ph="0"></span></td>'+
+      '<td><span class="desc" style="min-height:60px" contenteditable="true" data-r="desc" data-ph="Descripción"></span></td>'+
+      '<td class="c-unitval"><span contenteditable="true" data-r="unitValue" data-ph="$0.00"></span></td>'+
+      '<td class="c-sub"><div class="sub-wrap"><span>$</span><span data-r="subTotal" class="calc" style="text-align:right;flex:1;">0.00</span></div></td>';
+    return tr;
+  }
+  $('#addRow').addEventListener('click', () => { $('#goodsBody').appendChild(rowTemplate()); recalc(); });
+  $('#delRow').addEventListener('click', () => {
+    const rows = $$('#goodsBody .goods-row');
+    if (rows.length > 1){ rows[rows.length-1].remove(); recalc(); }
+  });
+
+  // Recalcular en vivo mientras el usuario escribe unidades o valor unitario
+  $('#goodsBody').addEventListener('input', e => {
+    const f = e.target.dataset && e.target.dataset.r;
+    if (f === 'units' || f === 'unitValue') recalc();
+  });
+
+  /* ---------- Exportar PDF: ajuste garantizado a hoja carta ---------- */
+  function pagePxHeight(){
+    // Alto útil real de una hoja carta con márgenes de 12mm (250mm de trabajo)
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;visibility:hidden;height:250mm;width:1px;';
+    document.body.appendChild(probe);
+    const h = probe.offsetHeight;
+    probe.remove();
+    return h;
+  }
+
+  /* Nombre del PDF exportado: aaaa_mm_dd_invoiceNo */
+  const APP_TITLE = document.title;
+  function exportFileName(){
+    // Fecha ACTUAL de generación del documento (no la del campo DATE de la factura),
+    // para que el nombre refleje cuándo se exportó y el orden cronológico sea real
+    const t = new Date();
+    const y = String(t.getFullYear());
+    const m = String(t.getMonth()+1).padStart(2,'0');
+    const d = String(t.getDate()).padStart(2,'0');
+    // Invoice No.: sanear caracteres no válidos para nombre de archivo
+    const inv = ($('[data-f="invoiceNo"]').innerText || 'sin_numero')
+      .trim().replace(/[\\/:*?"<>|\s]+/g,'-').replace(/^-+|-+$/g,'') || 'sin_numero';
+    return y + '_' + m + '_' + d + '_' + inv;
+  }
+
+  function fitToLetter(){
+    document.title = exportFileName();   // el navegador usa el título como nombre del PDF
+    const sheet = $('#sheet');
+    const frame = sheet.querySelector('.frame');
+    sheet.style.zoom = '';
+    document.body.classList.remove('one-page');
+
+    // Medir con las mismas reglas que usará la impresión
+    document.body.classList.add('print-sim');
+    const contentH = frame.offsetHeight;
+    document.body.classList.remove('print-sim');
+
+    const pageH = pagePxHeight();
+
+    if (contentH <= pageH){
+      // Cabe: fijar exactamente una hoja, con la leyenda anclada al pie
+      document.body.classList.add('one-page');
+    } else if (contentH <= pageH * 1.25){
+      // Se pasa poco: reducir escala para forzar una sola hoja
+      sheet.style.zoom = (pageH / contentH * 0.995).toFixed(4);
+      document.body.classList.add('one-page');
+    }
+    // Si excede 125%, es contenido genuinamente largo: fluye a varias páginas
+  }
+
+  function afterPrintCleanup(){
+    document.title = APP_TITLE;
+    $('#sheet').style.zoom = '';
+    document.body.classList.remove('one-page','print-sim');
+  }
+
+  window.addEventListener('beforeprint', fitToLetter);
+  window.addEventListener('afterprint', afterPrintCleanup);
+
+  $('#btnPdf').addEventListener('click', () => {
+    fitToLetter();               // garantizar el ajuste aunque el navegador no dispare beforeprint
+    setTimeout(() => window.print(), 30);
+  });
+
+  /* ---------- Guardar / cargar JSON ---------- */
+  function collect(){
+    const data = { fields:{}, rows:[], images:{
+      logo:{ src:images.logo.src, size:images.logo.size },
+      seal:{ src:images.seal.src, size:images.seal.size }
+    }};
+    $$('[data-f]').forEach(el => data.fields[el.dataset.f] = el.innerText);
+    $$('#goodsBody .goods-row').forEach(tr => {
+      const r = {};
+      tr.querySelectorAll('[data-r]').forEach(el => r[el.dataset.r] = el.innerText);
+      data.rows.push(r);
+    });
+    return data;
+  }
+  function apply(data){
+    if (data.images){
+      ['logo','seal'].forEach(k => {
+        if (data.images[k]){
+          images[k].size = data.images[k].size || 100;
+          setImage(k, data.images[k].src || null);
+        }
+      });
+    }
+    if (data.fields) Object.entries(data.fields).forEach(([k,v]) => {
+      const el = document.querySelector('[data-f="'+k+'"]');
+      if (el) el.innerText = v;
+    });
+    if (Array.isArray(data.rows) && data.rows.length){
+      const body = $('#goodsBody');
+      body.innerHTML = '';
+      data.rows.forEach(r => {
+        const tr = rowTemplate();
+        Object.entries(r).forEach(([k,v]) => {
+          const el = tr.querySelector('[data-r="'+k+'"]');
+          if (el) el.innerText = v;
+        });
+        body.appendChild(tr);
+      });
+    }
+  }
+  $('#btnSaveJson').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(collect(), null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = exportFileName() + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    status('Datos guardados en JSON.');
+  });
+  $('#btnLoadJson').addEventListener('click', () => $('#fileJson').click());
+  $('#fileJson').addEventListener('change', () => {
+    const f = $('#fileJson').files[0]; if(!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try { apply(JSON.parse(rd.result)); recalc(); status('Datos cargados.'); }
+      catch(e){ status('El archivo JSON no es válido.'); }
+    };
+    rd.readAsText(f);
+  });
+
+  /* ---------- Nueva factura ---------- */
+  $('#btnNew').addEventListener('click', () => {
+    ['invoiceNo','waybill','date','consignee','consigneePhone'].forEach(k => {
+      const el = document.querySelector('[data-f="'+k+'"]'); if (el) el.innerText = '';
+    });
+    const body = $('#goodsBody'); body.innerHTML = ''; body.appendChild(rowTemplate());
+    $('#totalUnits').textContent = '0';
+    $('#totalAmount').textContent = '0.00';
+    recalc();
+    status('Formulario en blanco (se conservan datos del remitente).');
+  });
+
+  /* ---------- Cargar PDF y extraer campos ---------- */
+  if (window.pdfjsLib){
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  $('#btnLoadPdf').addEventListener('click', () => $('#filePdf').click());
+  $('#filePdf').addEventListener('change', async () => {
+    const f = $('#filePdf').files[0]; if(!f) return;
+    if (!window.pdfjsLib){ status('No se pudo cargar el lector de PDF.'); return; }
+    status('Leyendo PDF…');
+    try{
+      const buf = await f.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+      const page = await pdf.getPage(1);
+      const tc = await page.getTextContent();
+      // Elementos con posición: {str, x, y}
+      const items = tc.items
+        .filter(i => i.str && i.str.trim())
+        .map(i => ({ str:i.str.trim(), x:i.transform[4], y:i.transform[5] }));
+      parsePdf(items);
+      recalc();
+      status('PDF cargado: revise y ajuste los campos.');
+    }catch(e){
+      console.error(e);
+      status('No fue posible leer el PDF (¿está escaneado sin texto?).');
+    }
+  });
+
+  function findItem(items, re){ return items.find(i => re.test(i.str)); }
+  const setF = (k,v) => { const el = document.querySelector('[data-f="'+k+'"]'); if (el && v) el.innerText = v; };
+
+  function parsePdf(items){
+    const all = items.map(i => i.str).join('\n');
+
+    // Campos simples por expresión regular sobre el texto completo
+    let m;
+    if ((m = all.match(/Invoice No\.?:?\s*\n?([A-Z0-9][A-Z0-9\-]*)/i)))    setF('invoiceNo', m[1]);
+    if ((m = all.match(/Waybill Number:?\s*\n?([^\n]+)/i)))               setF('waybill',  m[1].trim());
+    if ((m = all.match(/\b(\d{2}\/\d{2}\/\d{4})\b/)))                      setF('date',     m[1]);
+    if ((m = all.match(/\b(FOB|CIF|CFR|EXW|DAP|DDP|FCA|CPT|CIP)\b/)))      setF('incoterm', m[1]);
+    if ((m = all.match(/Attention:?\s*\n?([^\n]+)/i)))                     setF('attention', m[1].trim());
+    // País de origen: buscar el valor en la MISMA línea horizontal que la etiqueta
+    const hOrigin = findItem(items, /Country of Origin/i);
+    let originVal = '';
+    if (hOrigin){
+      const sameLine = items
+        .filter(i => Math.abs(i.y - hOrigin.y) < 4 && i.x > hOrigin.x + 10
+                     && !/Country of Origin|Goods/i.test(i.str)
+                     && /^[A-Za-zÁ-úá-ú][A-Za-zÁ-úá-ú .,-]*$/.test(i.str)
+                     && !/NET WEIGHT|TOTAL|KGS?$/i.test(i.str))
+        .sort((a,b) => a.x - b.x);
+      if (sameLine.length) originVal = sameLine.map(i => i.str).join(' ').trim();
+    }
+    setF('origin', originVal || 'Guatemala');
+
+    // Bloques por posición: columna derecha = consignatario
+    const hConsignee = findItem(items, /CONSIGNEE/i);
+    const hShipper   = findItem(items, /SHIPPER/i);
+    const hGoods     = findItem(items, /DESCRIPTION OF GOODS/i);
+    const yFloor     = hGoods ? hGoods.y : -Infinity;
+
+    if (hConsignee){
+      const phones = items.filter(i => /^Phone:?$/i.test(i.str) && i.x >= hConsignee.x - 10);
+      const yPhone = phones.length ? Math.min(...phones.map(p => p.y)) : yFloor;
+      const block = items
+        .filter(i => i.x >= hConsignee.x - 10 && i.y < hConsignee.y && i.y > yPhone
+                     && !/CONSIGNEE|BILL TO/i.test(i.str))
+        .sort((a,b) => b.y - a.y)
+        .map(i => i.str);
+      if (block.length) setF('consignee', block.join('\n'));
+
+      // Teléfono del consignatario: número a la derecha en la línea "Phone:"
+      const pRow = items.filter(i => Math.abs(i.y - yPhone) < 3 && /\d{6,}/.test(i.str));
+      if (pRow.length) setF('consigneePhone', pRow[pRow.length-1].str.replace(/[^\d+]/g,''));
+    }
+
+    if (hShipper && hConsignee){
+      const hAtt = findItem(items, /Attention/i);
+      const yAtt = hAtt ? hAtt.y : yFloor;
+      const block = items
+        .filter(i => i.x < hConsignee.x - 20 && i.x >= hShipper.x - 10
+                     && i.y < hShipper.y && i.y > yAtt
+                     && !/^SHIPPER/i.test(i.str))
+        .sort((a,b) => b.y - a.y || a.x - b.x);
+      // Reagrupar por línea (misma y aprox.)
+      const lines = [];
+      block.forEach(i => {
+        const last = lines[lines.length-1];
+        if (last && Math.abs(last.y - i.y) < 3){ last.str += '        ' + i.str; }
+        else lines.push({ y:i.y, str:i.str });
+      });
+      if (lines.length) setF('shipper', lines.map(l => l.str).join('\n'));
+    }
+
+    // Mercancías: extracción multi-renglón con columnas detectadas dinámicamente
+    if (hGoods){
+      const totals = items.filter(i => /^TOTAL$/i.test(i.str) && i.y < hGoods.y);
+      const yTot = totals.length ? Math.max(...totals.map(t => t.y)) : -Infinity;
+
+      // Centros aproximados de los encabezados de columna en ESTE PDF
+      const hUnitVal = findItem(items, /^UNIT VALUE$/i);
+      const hSubTot  = findItem(items, /SUB-?TOTAL/i);
+      const center = it => it.x + it.str.length * 3;   // ancho medio aprox. por carácter
+
+      // Ítems del área de mercancías (excluye "$" sueltos y "USD$")
+      const zone = items.filter(i =>
+        i.y < hGoods.y - 6 && i.y > yTot + 4 &&
+        !/^\$$/.test(i.str) && !/USD\$?$/i.test(i.str)
+      );
+
+      // Borde izquierdo real de la descripción = mínima x de los textos con letras
+      const moneyRe = /^\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$/;
+      const wordItems = zone.filter(i => /[A-Za-z]/.test(i.str) && !moneyRe.test(i.str));
+      const xDescLeft = wordItems.length ? Math.min(...wordItems.map(i => i.x)) : hGoods.x - 60;
+
+      const rightCols = [{ key:'desc', cx:center(hGoods) }];
+      if (hUnitVal) rightCols.push({ key:'unitValue', cx:center(hUnitVal) });
+      if (hSubTot)  rightCols.push({ key:'subTotal',  cx:center(hSubTot) });
+
+      // Izquierda del texto descriptivo = columna de unidades; el resto, por encabezado más cercano
+      const col = it => {
+        if (it.x < xDescLeft - 4) return 'units';
+        const cx = center(it);
+        let best = rightCols[0];
+        rightCols.forEach(c => { if (Math.abs(c.cx - cx) < Math.abs(best.cx - cx)) best = c; });
+        return best.key;
+      };
+
+      // Anclas de renglón: números enteros en la columna de unidades, de arriba hacia abajo
+      const anchors = zone.filter(i => col(i) === 'units' && /^\d+$/.test(i.str))
+                          .sort((a,b) => b.y - a.y);
+
+      if (anchors.length){
+        const rows = anchors.map((a, idx) => {
+          const yBottom = anchors[idx+1] ? anchors[idx+1].y + 3 : yTot;
+          // Rango del renglón: desde justo antes de su ancla (o del encabezado) hasta el siguiente ancla
+          const from = idx === 0 ? hGoods.y - 6 : a.y + 8;
+          const inRow = it => it.y <= from && it.y > yBottom;
+
+          // Descripción: agrupar por línea (misma y) preservando el orden vertical
+          const descItems = zone.filter(i => col(i) === 'desc' && inRow(i))
+                                .sort((p,q) => q.y - p.y || p.x - q.x);
+          const lines = [];
+          descItems.forEach(i => {
+            const last = lines[lines.length-1];
+            if (last && Math.abs(last.y - i.y) < 3) last.str += ' ' + i.str;
+            else lines.push({ y:i.y, str:i.str });
+          });
+
+          const uvItem  = zone.find(i => col(i) === 'unitValue' && inRow(i) && moneyRe.test(i.str));
+          const stItem  = zone.find(i => col(i) === 'subTotal'  && inRow(i) && moneyRe.test(i.str));
+
+          let unitValue = uvItem ? num(uvItem.str) : 0;
+          const subTot  = stItem ? num(stItem.str) : 0;
+          const units   = num(a.str);
+          // Si el PDF no trae valor unitario legible, derivarlo del subtotal
+          if (!unitValue && subTot && units) unitValue = subTot / units;
+
+          return { units: a.str,
+                   desc: lines.map(l => l.str).join('\n'),
+                   unitValue: unitValue ? '$' + unitValue.toFixed(2) : '' };
+        });
+
+        // Reconstruir la tabla con todos los renglones detectados
+        const body = document.getElementById('goodsBody');
+        body.innerHTML = '';
+        rows.forEach(r => {
+          const tr = rowTemplate();
+          tr.querySelector('[data-r="units"]').innerText     = r.units;
+          tr.querySelector('[data-r="desc"]').innerText      = r.desc;
+          tr.querySelector('[data-r="unitValue"]').innerText = r.unitValue;
+          body.appendChild(tr);
+        });
+      }
+      // Subtotales y totales: siempre recalculados (unidades × valor unitario, con decimales)
+      recalc();
+    }
+  }
+})();
+</script>
+</body>
+</html>
